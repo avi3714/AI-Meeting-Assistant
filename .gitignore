@@ -1,0 +1,77 @@
+
+# ==============================
+# Python
+# ==============================
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ==============================
+# Node.js / Next.js
+# ==============================
+node_modules/
+.next/
+out/
+build/
+
+# ==============================
+# Environment variables
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# Audio files
+# ==============================
+audio/
+processed_audio/
+
+# ==============================
+# Generated diarization data
+# ==============================
+diarization/
+
+# ==============================
+# Generated reports and transcripts
+# ==============================
+reports/
+transcripts/
+transcriptions/
+
+# ==============================
+# Pretrained models
+# ==============================
+pretrained_models/
+
+# ==============================
+# Python caches and logs
+# ==============================
+.pytest_cache/
+.mypy_cache/
+.cache/
+*.log
+
+# ==============================
+# IDE and OS
+# ==============================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ==============================
+# Build artifacts
+# ==============================
+*.tsbuildinfo
+# Additional generated files
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# Hugging Face credentials
+.cache/huggingface/
