@@ -4,12 +4,16 @@ import json
 import re
 import urllib.request
 import urllib.error
+import os
+import requests
+from dotenv import load_dotenv
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
+from reportlab.platypus import Flowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
@@ -27,10 +31,30 @@ from reportlab.platypus import (
 # CONFIGURATION
 # ==================================================
 
-MODEL = "qwen2.5:3b"
-OLLAMA_URL = "http://localhost:11434/api/generate"
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Load environment variables from the project-root .env file.
+load_dotenv(PROJECT_ROOT / ".env")
+
+# Ollama configuration.
+MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
+
+REMOTE_OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "").strip()
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
+
+if REMOTE_OLLAMA_URL:
+    # Accept either the server's base URL or its complete generate endpoint.
+    REMOTE_OLLAMA_URL = REMOTE_OLLAMA_URL.rstrip("/")
+
+    if REMOTE_OLLAMA_URL.endswith("/api/generate"):
+        OLLAMA_URL = REMOTE_OLLAMA_URL
+    else:
+        OLLAMA_URL = f"{REMOTE_OLLAMA_URL}/api/generate"
+
+    print("Ollama configuration: Remote API")
+else:
+    OLLAMA_URL = "http://localhost:11434/api/generate"
+    print("Ollama configuration: Local device")
 
 MAX_CHUNK_CHARS = 8000
 
@@ -59,28 +83,65 @@ def ask_ollama(prompt):
 
     data = json.dumps(payload).encode("utf-8")
 
+    # Prepare request headers.
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    # Add API key only when one has been configured.
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+
     request = urllib.request.Request(
         OLLAMA_URL,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST"
     )
 
     try:
         with urllib.request.urlopen(request, timeout=600) as response:
+
             result = json.loads(
                 response.read().decode("utf-8")
             )
 
         return result["response"].strip()
 
-    except urllib.error.URLError as error:
-        raise RuntimeError(
-            "Could not connect to Ollama. "
-            "Please make sure Ollama is running.\n"
-            f"Details: {error}"
+    except urllib.error.HTTPError as error:
+
+        error_details = error.read().decode(
+            "utf-8",
+            errors="replace"
         )
 
+        raise RuntimeError(
+            f"Ollama API returned HTTP {error.code}.\n"
+            f"Details: {error_details}"
+        ) from error
+
+    except urllib.error.URLError as error:
+
+        if REMOTE_OLLAMA_URL:
+            raise RuntimeError(
+                "Could not connect to the configured remote Ollama API.\n"
+                "Please check the API URL, server availability and network.\n"
+                f"Details: {error}"
+            ) from error
+
+        raise RuntimeError(
+            "Could not connect to local Ollama.\n"
+            "Please make sure Ollama is installed and running on "
+            "http://localhost:11434.\n"
+            f"Details: {error}"
+        ) from error
+
+    except (KeyError, json.JSONDecodeError) as error:
+
+        raise RuntimeError(
+            "Ollama returned an unexpected response.\n"
+            f"Details: {error}"
+        ) from error
 
 # ==================================================
 # TRANSCRIPT EXTRACTION
@@ -680,6 +741,47 @@ def format_duration(seconds):
     return f"{minutes} min {remaining_seconds} sec"
 
 
+
+
+# ==================================================
+# CLEAN MEETING NOTES PDF DESIGN
+# ==================================================
+
+class Checkbox(Flowable):
+    """Draw an empty checkbox for action items."""
+
+    def __init__(self, size=9):
+        super().__init__()
+        self.size = size
+        self.width = size
+        self.height = size
+
+    def draw(self):
+        self.canv.setStrokeColor(colors.HexColor("#333333"))
+        self.canv.setLineWidth(0.9)
+        self.canv.rect(0, 0, self.size, self.size)
+
+
+
+# ==================================================
+# CLEAN MEETING NOTES PDF DESIGN
+# ==================================================
+
+class Checkbox(Flowable):
+    """Draw an empty checkbox for action items."""
+
+    def __init__(self, size=9):
+        super().__init__()
+        self.size = size
+        self.width = size
+        self.height = size
+
+    def draw(self):
+        self.canv.setStrokeColor(colors.HexColor("#333333"))
+        self.canv.setLineWidth(0.9)
+        self.canv.rect(0, 0, self.size, self.size)
+
+
 # ==================================================
 # PDF STYLES
 # ==================================================
@@ -689,233 +791,267 @@ def create_styles():
     styles = getSampleStyleSheet()
 
     styles.add(ParagraphStyle(
-        name="ReportTitle",
+        name="MeetingTitle",
         parent=styles["Title"],
         fontName="Helvetica-Bold",
-        fontSize=23,
-        leading=29,
-        alignment=TA_CENTER,
-        textColor=NAVY,
-        spaceAfter=8
+        fontSize=21,
+        leading=27,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#222222"),
+        spaceAfter=17
     ))
 
     styles.add(ParagraphStyle(
-        name="ReportSubtitle",
-        parent=styles["Normal"],
-        fontSize=10,
-        leading=15,
-        alignment=TA_CENTER,
-        textColor=DARK_GREY,
-        spaceAfter=18
-    ))
-
-    styles.add(ParagraphStyle(
-        name="SectionHeadingCustom",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=13,
-        leading=18,
-        textColor=NAVY,
-        spaceBefore=15,
-        spaceAfter=7,
-        keepWithNext=True
-    ))
-
-    styles.add(ParagraphStyle(
-        name="SubheadingCustom",
-        parent=styles["Heading3"],
-        fontSize=10.5,
-        leading=14,
-        textColor=BLUE,
-        spaceBefore=8,
-        spaceAfter=5,
-        keepWithNext=True
-    ))
-
-    styles.add(ParagraphStyle(
-        name="BodyCustom",
+        name="ExecutiveSummary",
         parent=styles["BodyText"],
         fontName="Helvetica",
         fontSize=9.5,
         leading=14,
-        textColor=colors.HexColor("#252525"),
-        spaceAfter=7
+        textColor=colors.HexColor("#333333"),
+        spaceAfter=15
     ))
 
     styles.add(ParagraphStyle(
-        name="BulletCustom",
+        name="SectionHeadingNew",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=15,
+        textColor=colors.HexColor("#292929"),
+        spaceBefore=13,
+        spaceAfter=6,
+        keepWithNext=True
+    ))
+
+    styles.add(ParagraphStyle(
+        name="TopicHeadingNew",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=9.7,
+        leading=13,
+        textColor=colors.HexColor("#333333"),
+        spaceBefore=10,
+        spaceAfter=3,
+        keepWithNext=True
+    ))
+
+    styles.add(ParagraphStyle(
+        name="BodyNew",
         parent=styles["BodyText"],
         fontName="Helvetica",
         fontSize=9.3,
-        leading=14,
-        leftIndent=16,
-        firstLineIndent=-10,
-        textColor=colors.HexColor("#252525"),
+        leading=13.5,
+        textColor=colors.HexColor("#333333"),
         spaceAfter=6
     ))
 
     styles.add(ParagraphStyle(
-        name="MetadataCustom",
-        parent=styles["Normal"],
-        fontSize=9,
-        leading=13,
-        textColor=DARK_GREY
+        name="BulletNew",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9.3,
+        leading=13.5,
+        leftIndent=18,
+        firstLineIndent=-9,
+        textColor=colors.HexColor("#333333"),
+        spaceAfter=2
     ))
 
     styles.add(ParagraphStyle(
-        name="SmallNote",
-        parent=styles["Normal"],
-        fontSize=8,
-        leading=11,
-        textColor=colors.HexColor("#666666")
+        name="NestedBulletNew",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9.2,
+        leading=13,
+        leftIndent=34,
+        firstLineIndent=-9,
+        textColor=colors.HexColor("#333333"),
+        spaceAfter=2
     ))
 
     return styles
 
 
 # ==================================================
-# PDF CONTENT
+# MARKDOWN FORMATTING
 # ==================================================
 
-def add_metadata_table(story, metadata, meeting_name, styles):
+def clean_heading(text):
 
-    speaker_names = ", ".join(metadata["speakers"])
-
-    rows = [
-        [
-            Paragraph("<b>Meeting</b>", styles["MetadataCustom"]),
-            Paragraph(escape(meeting_name), styles["MetadataCustom"]),
-            Paragraph("<b>Duration</b>", styles["MetadataCustom"]),
-            Paragraph(
-                format_duration(metadata["duration"]),
-                styles["MetadataCustom"]
-            )
-        ],
-        [
-            Paragraph("<b>Detected speakers</b>", styles["MetadataCustom"]),
-            Paragraph(
-                str(metadata["speaker_count"]),
-                styles["MetadataCustom"]
-            ),
-            Paragraph("<b>Speaker turns</b>", styles["MetadataCustom"]),
-            Paragraph(
-                str(metadata["turn_count"]),
-                styles["MetadataCustom"]
-            )
-        ],
-        [
-            Paragraph("<b>Speaker labels</b>", styles["MetadataCustom"]),
-            Paragraph(
-                escape(speaker_names),
-                styles["MetadataCustom"]
-            ),
-            Paragraph("<b>Unknown turns</b>", styles["MetadataCustom"]),
-            Paragraph(
-                str(metadata["unknown_turns"]),
-                styles["MetadataCustom"]
-            )
-        ]
-    ]
-
-    table = Table(
-        rows,
-        colWidths=[
-            1.05 * inch,
-            1.75 * inch,
-            1.0 * inch,
-            2.0 * inch
-        ]
+    text = re.sub(
+        r"^\d+(?:\.\d+)*[.)]?\s*",
+        "",
+        text.strip()
     )
 
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BLUE),
-        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CFDCE8")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D6E0E8")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    return text
+
+
+def add_bullet(story, content, styles, nested=False):
+
+    content = format_inline_markdown(content)
+
+    bullet_symbol = "•"
+
+    if nested:
+        bullet_symbol = "–"
+
+    style = (
+        styles["NestedBulletNew"]
+        if nested
+        else styles["BulletNew"]
+    )
+
+    story.append(Paragraph(
+        f"{bullet_symbol} {content}",
+        style
+    ))
+
+
+def add_action_item(story, content, styles):
+
+    content = format_inline_markdown(content)
+
+    checkbox = Checkbox(size=9)
+
+    paragraph = Paragraph(
+        content,
+        styles["BulletNew"]
+    )
+
+    row = Table(
+        [[checkbox, paragraph]],
+        colWidths=[15, 470]
+    )
+
+    row.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3)
     ]))
 
-    story.append(table)
+    story.append(row)
+
+
+# ==================================================
+# SUMMARY CONTENT RENDERER
+# ==================================================
 
 
 def add_report_content(story, summary, styles):
 
     lines = summary.splitlines()
 
-    for line in lines:
+    current_section = ""
+    executive_summary = True
 
-        line = line.strip()
+    for raw_line in lines:
+
+        # Preserve indentation to identify nested bullets.
+        indentation = len(raw_line) - len(raw_line.lstrip())
+
+        line = raw_line.strip()
 
         if not line:
-            story.append(Spacer(1, 3))
             continue
 
-        # Main section headings.
+        # --------------------------------------------------
+        # MAIN SECTION HEADINGS
+        # --------------------------------------------------
+
         if line.startswith("## "):
 
-            heading = escape(line[3:].strip())
+            heading = clean_heading(line[3:])
 
-            story.append(Spacer(1, 5))
+            current_section = heading.lower()
 
-            story.append(KeepTogether([
-                Paragraph(
-                    heading,
-                    styles["SectionHeadingCustom"]
-                ),
-                HRFlowable(
-                    width="100%",
-                    thickness=0.6,
-                    color=colors.HexColor("#D4DCE4"),
-                    spaceAfter=8
-                )
-            ]))
+            # Executive Summary becomes the introductory
+            # paragraph rather than a separate heading.
+            if current_section == "executive summary":
+                executive_summary = True
+                continue
 
-        # Smaller headings.
-        elif line.startswith("### "):
+            executive_summary = False
 
-            heading = escape(line[4:].strip())
+            # Topics Discussed is a container heading.
+            # Its individual topic headings are displayed.
+            if current_section == "topics discussed":
+                continue
+
+            # Rename Action Items to Next steps.
+            if current_section == "action items":
+                heading = "Next steps"
 
             story.append(Paragraph(
-                heading,
-                styles["SubheadingCustom"]
+                escape(heading),
+                styles["SectionHeadingNew"]
             ))
 
-        # Bullet points.
+        # --------------------------------------------------
+        # SUBHEADINGS / TOPICS
+        # --------------------------------------------------
+
+        elif line.startswith("### "):
+
+            heading = clean_heading(line[4:])
+
+            story.append(Paragraph(
+                escape(heading),
+                styles["TopicHeadingNew"]
+            ))
+
+            executive_summary = False
+
+        # --------------------------------------------------
+        # BULLET POINTS
+        # --------------------------------------------------
+
         elif line.startswith(("- ", "* ")):
 
-            content = format_inline_markdown(line[2:].strip())
+            content = line[2:].strip()
 
-            bullet = Paragraph(
-                f"&bull; {content}",
-                styles["BulletCustom"]
-            )
+            # Action items become empty checkboxes.
+            if current_section == "action items":
 
-            story.append(KeepTogether([bullet]))
-
-        # Numbered points.
-        elif re.match(r"^\d+[.)]\s", line):
-
-            content = format_inline_markdown(line)
-
-            story.append(KeepTogether([
-                Paragraph(
+                add_action_item(
+                    story,
                     content,
-                    styles["BulletCustom"]
+                    styles
                 )
-            ]))
 
-        # Regular paragraphs.
+            else:
+
+                add_bullet(
+                    story,
+                    content,
+                    styles,
+                    nested=(indentation >= 2)
+                )
+
+            executive_summary = False
+
+        # --------------------------------------------------
+        # REGULAR PARAGRAPHS
+        # --------------------------------------------------
+
         else:
 
             content = format_inline_markdown(line)
 
+            selected_style = (
+                styles["ExecutiveSummary"]
+                if executive_summary
+                else styles["BodyNew"]
+            )
+
             story.append(Paragraph(
                 content,
-                styles["BodyCustom"]
+                selected_style
             ))
+
+            executive_summary = False
 
 
 # ==================================================
@@ -941,103 +1077,30 @@ def create_pdf(
     document = SimpleDocTemplate(
         str(output_path),
         pagesize=A4,
-        rightMargin=0.65 * inch,
-        leftMargin=0.65 * inch,
-        topMargin=0.65 * inch,
-        bottomMargin=0.7 * inch,
-        title=f"Meeting Summary - {meeting_name}",
+        rightMargin=0.85 * inch,
+        leftMargin=0.85 * inch,
+        topMargin=0.55 * inch,
+        bottomMargin=0.65 * inch,
+        title="Meeting Summary",
         author="AI Meeting Assistant"
     )
 
     story = []
 
-    # Title.
-    story.append(Spacer(1, 8))
-
+    # Main title.
     story.append(Paragraph(
-        "MEETING SUMMARY",
-        styles["ReportTitle"]
+        "Meeting Summary",
+        styles["MeetingTitle"]
     ))
 
-    story.append(Paragraph(
-        f"Meeting Report | {escape(meeting_name)}",
-        styles["ReportSubtitle"]
-    ))
-
-    story.append(HRFlowable(
-        width="100%",
-        thickness=1.3,
-        color=NAVY,
-        spaceAfter=16
-    ))
-
-    # Meeting overview.
-    story.append(Paragraph(
-        "MEETING OVERVIEW",
-        styles["SectionHeadingCustom"]
-    ))
-
-    add_metadata_table(
-        story,
-        metadata,
-        meeting_name,
-        styles
-    )
-
-    story.append(Spacer(1, 12))
-
-    # Report content.
+    # Render the LLM-generated summary.
     add_report_content(
         story,
         summary,
         styles
     )
 
-    # Footer.
-    def add_footer(canvas, doc):
-
-        canvas.saveState()
-
-        page_width, _ = A4
-
-        canvas.setStrokeColor(
-            colors.HexColor("#D6DCE2")
-        )
-
-        canvas.setLineWidth(0.5)
-
-        canvas.line(
-            0.65 * inch,
-            0.52 * inch,
-            page_width - 0.65 * inch,
-            0.52 * inch
-        )
-
-        canvas.setFont("Helvetica", 8)
-
-        canvas.setFillColor(
-            colors.HexColor("#777777")
-        )
-
-        canvas.drawString(
-            0.65 * inch,
-            0.35 * inch,
-            "AI Meeting Assistant"
-        )
-
-        canvas.drawRightString(
-            page_width - 0.65 * inch,
-            0.35 * inch,
-            f"Page {doc.page}"
-        )
-
-        canvas.restoreState()
-
-    document.build(
-        story,
-        onFirstPage=add_footer,
-        onLaterPages=add_footer
-    )
+    document.build(story)
 
     print(f"\nPDF created: {output_path}")
 

@@ -75,3 +75,5 @@ Thumbs.db
 
 # Hugging Face credentials
 .cache/huggingface/
+
+.env
