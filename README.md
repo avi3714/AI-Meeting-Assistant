@@ -2,7 +2,9 @@
 
 An AI-powered meeting assistant that converts meeting audio into speaker-attributed transcripts, structured summaries, and downloadable PDF reports.
 
-MeetMind combines automatic speech recognition, speaker diarization, speaker recognition, and locally hosted large language models to simplify meeting documentation.
+MeetMind combines automatic speech recognition, speaker diarization, speaker recognition, and configurable large language model execution to simplify meeting documentation.
+
+Users can generate AI-powered summaries through either a remotely hosted Ollama API or a locally installed Ollama instance.
 
 ---
 
@@ -21,7 +23,7 @@ MeetMind combines automatic speech recognition, speaker diarization, speaker rec
    - [Install FFmpeg](#5-install-ffmpeg)
    - [Install Python Dependencies](#6-install-python-dependencies)
    - [Configure Hugging Face](#7-configure-hugging-face-access)
-   - [Install and Configure Ollama](#8-install-and-configure-ollama)
+   - [Configure Ollama](#8-configure-ollama)
    - [Install Node.js](#9-install-nodejs-and-npm)
    - [Install Frontend Dependencies](#10-install-frontend-dependencies)
 7. [Running the Application](#running-the-application)
@@ -45,6 +47,7 @@ MeetMind combines automatic speech recognition, speaker diarization, speaker rec
 - Modification of automatically assigned speaker labels.
 - Participant name assignment.
 - AI-powered meeting summarization using Ollama and Qwen 2.5.
+- Support for both remote and local Ollama execution.
 - PDF generation for transcripts and meeting summaries.
 - FastAPI backend with asynchronous meeting-processing jobs.
 - Next.js frontend for uploading recordings and managing transcripts.
@@ -218,7 +221,12 @@ This replaces generic speaker labels with meaningful participant names in the up
 
 After reviewing speaker assignments and entering participant names, users can generate an updated meeting summary.
 
-The application uses Ollama to run the Qwen 2.5 3B language model locally. The corrected transcript is used as the basis for generating the updated summary.
+The application uses Ollama to run the Qwen 2.5 3B language model. The model can be accessed through either:
+
+- A remotely hosted Ollama-compatible API.
+- A locally running Ollama instance.
+
+The corrected transcript is used as the basis for generating the updated summary.
 
 The summary contains the following sections:
 
@@ -281,11 +289,12 @@ Before installing MeetMind, ensure that your system meets the following requirem
 | Node.js | Current LTS version |
 | npm | Installed with Node.js |
 | FFmpeg | Latest available version |
-| Ollama | Latest available version |
 | RAM | 16 GB recommended |
 | GPU | NVIDIA GPU recommended for accelerated processing |
 | Storage | Sufficient space for models, dependencies, and recordings |
 | Internet | Required for initial dependency and model downloads |
+
+**Ollama requirement:** A working Ollama-compatible remote API or a local Ollama installation is required when generating AI summaries. Local Ollama installation is optional if a remote API is configured.
 
 **Note:** GPU acceleration is optional in principle, but processing performance can differ considerably between CPU and GPU configurations. PyTorch, CUDA, and the installed NVIDIA drivers must be compatible.
 
@@ -504,6 +513,7 @@ The requirements file contains the libraries used by the backend and processing 
 - SoundFile
 - Python multipart
 - Pydantic
+- Python-dotenv
 
 The installation may take some time because several audio-processing and machine-learning packages have additional dependencies.
 
@@ -577,43 +587,80 @@ The command should display the authenticated Hugging Face account.
 
 **Important:** Model access must be granted before the diarization pipeline can download and use the required model.
 
-## 8. Install and Configure Ollama
+## 8. Configure Ollama
 
-MeetMind uses Ollama to run the Qwen 2.5 3B language model locally for meeting summarization.
+MeetMind uses Ollama to generate AI-powered meeting summaries using the Qwen 2.5 3B language model.
 
-### Step 1: Download Ollama
+MeetMind supports two configurations:
 
-Visit:
+1. Remote Ollama API.
+2. Local Ollama installation.
+
+A local Ollama installation is not required when using a properly configured remote API.
+
+### Step 1: Create the Environment File
+
+In the root directory of the project, create a file named `.env`.
+
+You can use the provided `.env.example` file as a template:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+The `.env` file should be located alongside `requirements.txt` and `README.md`.
+
+### Step 2: Configure a Remote Ollama API
+
+If you have access to a remote Ollama API, enter its configuration in `.env`:
+
+```env
+OLLAMA_BASE_URL=https://your-server.com
+OLLAMA_API_KEY=your_api_key
+OLLAMA_MODEL=qwen2.5:3b
+```
+
+Replace the example URL and API key with your actual credentials.
+
+The remote server must expose an Ollama-compatible `/api/generate` endpoint.
+
+The application automatically uses the configured remote API when `OLLAMA_BASE_URL` is provided.
+
+**No local Ollama installation is required in this configuration.**
+
+The remote server must be accessible, support the expected API request format, and have the configured model available.
+
+### Step 3: Configure Local Ollama (Alternative)
+
+If you do not have access to a remote Ollama API, you can run Ollama locally.
+
+Download and install Ollama from:
 
 https://ollama.com/download
 
-Download and install Ollama for Windows.
-
-### Step 2: Verify Installation
-
-Open a new terminal and run:
-
-```powershell
-ollama --version
-```
-
-The installed Ollama version should be displayed.
-
-### Step 3: Download Qwen 2.5 3B
-
-Run:
+After installation, open a terminal and download the required model:
 
 ```powershell
 ollama pull qwen2.5:3b
 ```
 
-This downloads the model to your local system.
+Create or update the `.env` file:
 
-The first download may take some time depending on your internet connection.
+```env
+OLLAMA_BASE_URL=
+OLLAMA_API_KEY=
+OLLAMA_MODEL=qwen2.5:3b
+```
 
-### Step 4: Verify the Model
+When the remote URL is empty, MeetMind automatically uses the local endpoint:
 
-List the downloaded models:
+```text
+http://localhost:11434/api/generate
+```
+
+Make sure the Ollama service is running before generating meeting summaries.
+
+Verify the downloaded model:
 
 ```powershell
 ollama list
@@ -625,9 +672,7 @@ You should find:
 qwen2.5:3b
 ```
 
-### Step 5: Test the Model
-
-Run:
+You can test the model using:
 
 ```powershell
 ollama run qwen2.5:3b
@@ -638,8 +683,6 @@ Enter a simple prompt:
 ```text
 Summarize the importance of effective meeting documentation.
 ```
-
-If the model responds, the local LLM is ready.
 
 Exit the interactive session using:
 
@@ -653,9 +696,23 @@ Ollama normally runs its local service automatically after installation. If the 
 ollama serve
 ```
 
-Keep the Ollama service available while generating meeting summaries.
+### Environment Variables
 
-**Note:** Model inference happens locally through Ollama. The initial model download requires an internet connection.
+| Variable | Description |
+|---|---|
+| `OLLAMA_BASE_URL` | Remote Ollama server URL. Leave empty to use local Ollama. |
+| `OLLAMA_API_KEY` | Optional API key for remote authentication. |
+| `OLLAMA_MODEL` | Ollama model used for meeting summarization. |
+
+### Important Ollama Configuration Notes
+
+- A remote API URL takes priority over the local Ollama endpoint.
+- If no remote URL is configured, the application uses local Ollama.
+- If a configured remote server is unavailable, summary generation returns a connection error. It does not automatically switch to local Ollama.
+- The configured model must be available on the selected Ollama server.
+- The API key is optional and is sent as a Bearer authentication header when configured.
+- Never upload your actual `.env` file or expose API credentials on GitHub.
+- The `.env` file is excluded from Git through `.gitignore`.
 
 ## 9. Install Node.js and npm
 
@@ -718,7 +775,7 @@ MeetMind requires two main processes to run:
 1. FastAPI backend.
 2. Next.js frontend.
 
-Ollama must also be available when generating AI summaries.
+The Ollama service must also be accessible when generating AI summaries, either through the configured remote API or through a local Ollama installation.
 
 The backend and frontend should run in separate terminal windows.
 
@@ -788,17 +845,27 @@ Open this URL in your browser.
 
 The MeetMind home screen should now be visible.
 
-## 3. Verify Ollama
+## 3. Verify Ollama Availability
 
-Before generating summaries, ensure that Ollama is running and the required model is available.
+Before generating summaries, ensure that the Ollama configuration is correct.
 
-Check the installed model:
+**If using a remote API:**
+
+- Verify that `OLLAMA_BASE_URL` is correctly configured in `.env`.
+- Ensure that the remote server is accessible.
+- Confirm that the configured model is available on the remote server.
+
+No local Ollama installation or `ollama list` command is required in this configuration.
+
+**If using local Ollama:**
+
+Run:
 
 ```powershell
 ollama list
 ```
 
-Ensure that `qwen2.5:3b` is present.
+Ensure that `qwen2.5:3b` is present and the Ollama service is running.
 
 ---
 
@@ -864,18 +931,22 @@ AI-Meeting-Assistant/
 ├── requirements.txt
 ├── README.md
 ├── .gitignore
+├── .env.example
+├── .env                  # Local configuration; never commit
 │
-├── audio/                  # Generated at runtime
-├── processed_audio/        # Generated at runtime
-├── diarization/            # Generated at runtime
-├── transcriptions/         # Generated at runtime
-├── transcripts/            # Generated at runtime
-├── reports/                # Generated at runtime
+├── audio/                # Generated at runtime
+├── processed_audio/      # Generated at runtime
+├── diarization/          # Generated at runtime
+├── transcriptions/       # Generated at runtime
+├── transcripts/          # Generated at runtime
+├── reports/              # Generated at runtime
 │
-└── .venv/                  # Local Python virtual environment
+└── .venv/                # Local Python virtual environment
 ```
 
 The runtime-generated directories and virtual environment are not required to be present in a fresh Git clone. They are created or populated as the application runs.
+
+The `.env.example` file provides a template for configuring Ollama. Each user should create their own `.env` file using this template and supply their own configuration.
 
 ---
 
@@ -929,7 +1000,9 @@ The resulting transcript contains:
 
 ## 6. AI Summarization
 
-The generated transcript is provided to the locally running Qwen 2.5 3B model through Ollama.
+The generated transcript is provided to the configured Qwen 2.5 3B language model through Ollama.
+
+Ollama can be accessed using either a remote API or a locally running service, depending on the `.env` configuration.
 
 The model generates a structured meeting summary.
 
@@ -964,19 +1037,21 @@ They are excluded from Git to prevent large audio files, generated reports, and 
 
 2. **Hugging Face authentication:** Access to gated Pyannote models requires an authenticated Hugging Face account with the necessary model permissions.
 
-3. **Local LLM execution:** Ollama runs Qwen 2.5 3B locally. Ensure sufficient RAM and available hardware resources.
+3. **Ollama configuration:** AI summarization requires either a configured remote Ollama API or a locally running Ollama instance. Local installation is not required when using a remote API.
 
-4. **GPU compatibility:** CUDA acceleration requires a compatible NVIDIA GPU, driver, and PyTorch installation. CPU execution may be slower.
+4. **Remote API availability:** A configured remote Ollama server must be accessible and have the configured model available. If the remote server is unavailable, summary generation reports an error rather than automatically switching to local Ollama.
 
-5. **Virtual environment:** Always activate `.venv` before running backend commands or installing Python packages.
+5. **GPU compatibility:** CUDA acceleration requires a compatible NVIDIA GPU, driver, and PyTorch installation. CPU execution may be slower.
 
-6. **Two terminal windows:** Keep the backend and frontend running in separate terminals during development.
+6. **Virtual environment:** Always activate `.venv` before running backend commands or installing Python packages.
 
-7. **Generated files:** Audio recordings, intermediate files, transcripts, and PDF reports are generated locally and are not included in a fresh repository clone.
+7. **Two terminal windows:** Keep the backend and frontend running in separate terminals during development.
 
-8. **Credentials:** Never upload Hugging Face access tokens, API keys, passwords, or other credentials to GitHub.
+8. **Generated files:** Audio recordings, intermediate files, transcripts, and PDF reports are generated locally and are not included in a fresh repository clone.
 
-9. **Meeting data:** Uploaded recordings and generated reports are stored locally by the application. Protect these files appropriately, particularly when they contain confidential meeting information.
+9. **Credentials:** Never upload Hugging Face access tokens, Ollama API keys, passwords, or other credentials to GitHub. Keep the actual `.env` file private.
+
+10. **Meeting data:** Uploaded recordings and generated reports are stored locally by the application. Protect these files appropriately, particularly when they contain confidential meeting information.
 
 ---
 
@@ -996,4 +1071,3 @@ Potential future improvements include:
 # License
 
 This project is available under the license specified in the repository.
-
